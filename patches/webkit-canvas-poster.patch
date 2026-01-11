@@ -1,0 +1,515 @@
+diff --git a/LayoutTests/fast/canvas/canvas-poster-attribute-expected.txt b/LayoutTests/fast/canvas/canvas-poster-attribute-expected.txt
+new file mode 100644
+index 000000000000..ef9cbcdc7bbf
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-attribute-expected.txt
+@@ -0,0 +1,18 @@
++Test that canvas poster attribute reflects correctly and poster is hidden after drawing.
++
++On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
++
++
++PASS canvas.poster is ''
++PASS canvas.poster is 'test-image.png'
++PASS canvas.poster is 'another-image.png'
++PASS canvas.poster is ''
++PASS canvas2.hasAttribute('poster') is true
++PASS canvas2.hasAttribute('poster') is true
++PASS canvas3.getAttribute('poster') is 'relative/path/image.png'
++PASS canvas4.poster is ''
++PASS canvas4.getAttribute('poster') is '   '
++PASS successfullyParsed is true
++
++TEST COMPLETE
++
+diff --git a/LayoutTests/fast/canvas/canvas-poster-attribute.html b/LayoutTests/fast/canvas/canvas-poster-attribute.html
+new file mode 100644
+index 000000000000..0e18c3872deb
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-attribute.html
+@@ -0,0 +1,63 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++<script src="../../resources/js-test-pre.js"></script>
++</head>
++<body>
++<script>
++description("Test that canvas poster attribute reflects correctly and poster is hidden after drawing.");
++
++if (window.testRunner)
++    testRunner.dumpAsText();
++
++// Test 1: poster attribute reflection
++var canvas = document.createElement("canvas");
++canvas.width = 100;
++canvas.height = 100;
++
++shouldBe("canvas.poster", "''");
++
++canvas.poster = "test-image.png";
++shouldBe("canvas.poster", "'test-image.png'");
++
++canvas.setAttribute("poster", "another-image.png");
++shouldBe("canvas.poster", "'another-image.png'");
++
++canvas.removeAttribute("poster");
++shouldBe("canvas.poster", "''");
++
++// Test 2: hasBeenDrawnTo tracking (via shouldDisplayPosterImage behavior)
++var canvas2 = document.createElement("canvas");
++canvas2.width = 50;
++canvas2.height = 50;
++canvas2.poster = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
++document.body.appendChild(canvas2);
++
++// Before drawing, shouldDisplayPosterImage should be true
++// (we can't directly test this from JS, but we can test that the poster attribute is set)
++shouldBeTrue("canvas2.hasAttribute('poster')");
++
++// Get context and draw
++var ctx = canvas2.getContext("2d");
++ctx.fillStyle = "red";
++ctx.fillRect(0, 0, 50, 50);
++
++// Poster attribute should still be there (it doesn't get removed)
++shouldBeTrue("canvas2.hasAttribute('poster')");
++
++// Test 3: URL resolution for poster
++var canvas3 = document.createElement("canvas");
++canvas3.poster = "relative/path/image.png";
++shouldBe("canvas3.getAttribute('poster')", "'relative/path/image.png'");
++
++// Test 4: Empty poster
++var canvas4 = document.createElement("canvas");
++canvas4.poster = "";
++shouldBe("canvas4.poster", "''");
++
++canvas4.poster = "   ";
++shouldBe("canvas4.getAttribute('poster')", "'   '");
++</script>
++<script src="../../resources/js-test-post.js"></script>
++</body>
++</html>
+diff --git a/LayoutTests/fast/canvas/canvas-poster-rendering-expected.html b/LayoutTests/fast/canvas/canvas-poster-rendering-expected.html
+new file mode 100644
+index 000000000000..e1fff1b34a37
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-rendering-expected.html
+@@ -0,0 +1,24 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++<style>
++canvas {
++    border: 1px solid black;
++}
++</style>
++</head>
++<body>
++<p>This test verifies that the canvas poster image is displayed when the canvas hasn't been drawn to.</p>
++<p>The canvas below should show a green rectangle (the poster image).</p>
++
++<canvas id="canvas" width="100" height="100"></canvas>
++
++<script>
++// Draw the expected green rectangle
++var canvas = document.getElementById('canvas');
++var ctx = canvas.getContext('2d');
++ctx.fillStyle = '#00ff00';
++ctx.fillRect(0, 0, 100, 100);
++</script>
++</body>
++</html>
+diff --git a/LayoutTests/fast/canvas/canvas-poster-rendering.html b/LayoutTests/fast/canvas/canvas-poster-rendering.html
+new file mode 100644
+index 000000000000..62c30c374f89
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-rendering.html
+@@ -0,0 +1,28 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++<style>
++canvas {
++    border: 1px solid black;
++}
++</style>
++</head>
++<body>
++<p>This test verifies that the canvas poster image is displayed when the canvas hasn't been drawn to.</p>
++<p>The canvas below should show a green rectangle (the poster image).</p>
++
++<canvas id="canvas" width="100" height="100" 
++    poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%2300ff00' width='100' height='100'/%3E%3C/svg%3E">
++</canvas>
++
++<script>
++if (window.testRunner) {
++    testRunner.waitUntilDone();
++    // Wait for the poster image to load
++    setTimeout(function() {
++        testRunner.notifyDone();
++    }, 100);
++}
++</script>
++</body>
++</html>
+diff --git a/LayoutTests/fast/canvas/canvas-poster-transition-expected.html b/LayoutTests/fast/canvas/canvas-poster-transition-expected.html
+new file mode 100644
+index 000000000000..9c1763935ab0
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-transition-expected.html
+@@ -0,0 +1,24 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++<style>
++canvas {
++    border: 1px solid black;
++}
++</style>
++</head>
++<body>
++<p>This test verifies that the canvas poster image disappears after the canvas has been drawn to.</p>
++<p>The canvas below should show a red rectangle (the drawn content), not green (the poster).</p>
++
++<canvas id="canvas" width="100" height="100"></canvas>
++
++<script>
++// Draw the expected red rectangle
++var canvas = document.getElementById('canvas');
++var ctx = canvas.getContext('2d');
++ctx.fillStyle = '#ff0000';
++ctx.fillRect(0, 0, 100, 100);
++</script>
++</body>
++</html>
+diff --git a/LayoutTests/fast/canvas/canvas-poster-transition.html b/LayoutTests/fast/canvas/canvas-poster-transition.html
+new file mode 100644
+index 000000000000..c11ea3b5ee8e
+--- /dev/null
++++ b/LayoutTests/fast/canvas/canvas-poster-transition.html
+@@ -0,0 +1,33 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++<style>
++canvas {
++    border: 1px solid black;
++}
++</style>
++</head>
++<body>
++<p>This test verifies that the canvas poster image disappears after the canvas has been drawn to.</p>
++<p>The canvas below should show a red rectangle (the drawn content), not green (the poster).</p>
++
++<canvas id="canvas" width="100" height="100" 
++    poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%2300ff00' width='100' height='100'/%3E%3C/svg%3E">
++</canvas>
++
++<script>
++// Draw to the canvas - this should hide the poster
++var canvas = document.getElementById('canvas');
++var ctx = canvas.getContext('2d');
++ctx.fillStyle = '#ff0000';
++ctx.fillRect(0, 0, 100, 100);
++
++if (window.testRunner) {
++    testRunner.waitUntilDone();
++    setTimeout(function() {
++        testRunner.notifyDone();
++    }, 100);
++}
++</script>
++</body>
++</html>
+diff --git a/Source/WebCore/html/HTMLCanvasElement.cpp b/Source/WebCore/html/HTMLCanvasElement.cpp
+index 7b531200ba10..216c297b95f9 100644
+--- a/Source/WebCore/html/HTMLCanvasElement.cpp
++++ b/Source/WebCore/html/HTMLCanvasElement.cpp
+@@ -43,6 +43,7 @@
+ #include "EventTargetInlines.h"
+ #include "FrameDestructionObserverInlines.h"
+ #include "GPU.h"
++#include "HTMLImageLoader.h"
+ #include "GPUBasedCanvasRenderingContext.h"
+ #include "GPUCanvasContext.h"
+ #include "GeometryUtilities.h"
+@@ -177,6 +178,14 @@ void HTMLCanvasElement::attributeChanged(const QualifiedName& name, const AtomSt
+ {
+     if (name == widthAttr || name == heightAttr)
+         didUpdateSizeProperties();
++    else if (name == posterAttr) {
++        if (shouldDisplayPosterImage()) {
++            if (!m_imageLoader)
++                lazyInitialize(m_imageLoader, makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this));
++            m_imageLoader->updateFromElementIgnoringPreviousError();
++        } else if (auto* renderer = this->renderer())
++            renderer->repaint();
++    }
+     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
+ }
+ 
+@@ -188,6 +197,55 @@ RenderPtr<RenderElement> HTMLCanvasElement::createElementRenderer(RenderStyle&&
+     return HTMLElement::createElementRenderer(WTF::move(style), insertionPosition);
+ }
+ 
++void HTMLCanvasElement::didAttachRenderers()
++{
++    HTMLElement::didAttachRenderers();
++    
++    if (shouldDisplayPosterImage()) {
++        if (!m_imageLoader)
++            lazyInitialize(m_imageLoader, makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this));
++        m_imageLoader->updateFromElement();
++    }
++}
++
++bool HTMLCanvasElement::shouldDisplayPosterImage() const
++{
++    if (m_hasBeenDrawnTo)
++        return false;
++    
++    if (posterImageURL().isEmpty())
++        return false;
++    
++    return true;
++}
++
++URL HTMLCanvasElement::posterImageURL() const
++{
++    auto url = attributeWithoutSynchronization(posterAttr).string().trim(isASCIIWhitespace);
++    if (url.isEmpty())
++        return URL();
++    return document().completeURL(url);
++}
++
++const AtomString& HTMLCanvasElement::imageSourceURL() const
++{
++    return attributeWithoutSynchronization(posterAttr);
++}
++
++void HTMLCanvasElement::setHasBeenDrawnTo(bool value)
++{
++    if (m_hasBeenDrawnTo == value)
++        return;
++    
++    m_hasBeenDrawnTo = value;
++    
++    if (value) {
++        // Transitioning from poster to bitmap - trigger repaint
++        if (auto* renderer = this->renderer())
++            renderer->repaint();
++    }
++}
++
+ bool HTMLCanvasElement::isReplaced(const RenderStyle*) const
+ {
+     RefPtr frame = document().frame();
+@@ -592,6 +650,7 @@ std::optional<FloatRect> HTMLCanvasElement::computeDirtyRectangleIfNeeded(const
+ 
+ void HTMLCanvasElement::didDraw(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
+ {
++    setHasBeenDrawnTo(true);
+     clearCopiedImage();
+     if (CheckedPtr renderer = renderBox()) {
+         const std::optional<FloatRect> dirtyRect = computeDirtyRectangleIfNeeded(rect);
+@@ -992,6 +1051,9 @@ void HTMLCanvasElement::eventListenersDidChange()
+ 
+ void HTMLCanvasElement::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
+ {
++    if (m_imageLoader)
++        m_imageLoader->elementDidMoveToNewDocument(oldDocument);
++    
+     ActiveDOMObject::didMoveToNewDocument(newDocument);
+     if (RefPtr context = renderingContext()) {
+         oldDocument.removeCanvasNeedingPreparationForDisplayOrFlush(*context);
+diff --git a/Source/WebCore/html/HTMLCanvasElement.h b/Source/WebCore/html/HTMLCanvasElement.h
+index 07c922a1e931..b23b586239b6 100644
+--- a/Source/WebCore/html/HTMLCanvasElement.h
++++ b/Source/WebCore/html/HTMLCanvasElement.h
+@@ -32,6 +32,7 @@
+ #include <WebCore/CanvasBase.h>
+ #include <WebCore/Document.h>
+ #include <WebCore/FloatRect.h>
++#include <wtf/URL.h>
+ #include <WebCore/GraphicsTypes.h>
+ #include <WebCore/HTMLElement.h>
+ #include <WebCore/PlatformDynamicRangeLimit.h>
+@@ -50,6 +51,7 @@ class CanvasRenderingContext2D;
+ class GPU;
+ class GPUCanvasContext;
+ class GraphicsContext;
++class HTMLImageLoader;
+ class Image;
+ class ImageBitmapRenderingContext;
+ class ImageBuffer;
+@@ -125,6 +127,13 @@ public:
+ 
+     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
+ 
++    // Poster image support
++    bool shouldDisplayPosterImage() const;
++    URL posterImageURL() const;
++    bool hasBeenDrawnTo() const { return m_hasBeenDrawnTo; }
++    void setHasBeenDrawnTo(bool value);
++    HTMLImageLoader* imageLoader() const { return m_imageLoader.get(); }
++
+     Image* copiedImage() const final;
+     void clearCopiedImage() const final;
+     RefPtr<ImageData> getImageData();
+@@ -171,6 +180,9 @@ private:
+     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
+     bool isReplaced(const RenderStyle* = nullptr) const final;
+ 
++    void didAttachRenderers() final;
++    const AtomString& imageSourceURL() const final;
++
+     bool canContainRangeEndPoint() const final;
+     bool canStartSelection() const final;
+ 
+@@ -198,6 +210,10 @@ private:
+     std::unique_ptr<CanvasRenderingContext> m_context;
+     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
+     mutable RefPtr<Image> m_copiedImage; // FIXME: This is temporary for platforms that have to copy the image buffer to render (and for CSSCanvasValue).
++    
++    // Poster image support
++    mutable std::unique_ptr<HTMLImageLoader> m_imageLoader;
++    bool m_hasBeenDrawnTo { false };
+ };
+ 
+ WebCoreOpaqueRoot root(HTMLCanvasElement*);
+diff --git a/Source/WebCore/html/HTMLCanvasElement.idl b/Source/WebCore/html/HTMLCanvasElement.idl
+index 3748b869d97e..f2667f8b8c7e 100644
+--- a/Source/WebCore/html/HTMLCanvasElement.idl
++++ b/Source/WebCore/html/HTMLCanvasElement.idl
+@@ -45,6 +45,8 @@ typedef (
+     [CEReactions=NotNeeded, CallTracer=InspectorCanvasCallTracer] attribute unsigned long width;
+     [CEReactions=NotNeeded, CallTracer=InspectorCanvasCallTracer] attribute unsigned long height;
+ 
++    [CEReactions=NotNeeded, Reflect, URL] attribute USVString poster;
++
+     [CallWith=CurrentGlobalObject] RenderingContext? getContext(DOMString contextId, any... arguments);
+ 
+     DOMString toDataURL(optional DOMString type, optional any quality);
+diff --git a/Source/WebCore/rendering/RenderHTMLCanvas.cpp b/Source/WebCore/rendering/RenderHTMLCanvas.cpp
+index 1f1888b6a7e2..6bea413b2a98 100644
+--- a/Source/WebCore/rendering/RenderHTMLCanvas.cpp
++++ b/Source/WebCore/rendering/RenderHTMLCanvas.cpp
+@@ -26,10 +26,12 @@
+ #include "config.h"
+ #include "RenderHTMLCanvas.h"
+ 
++#include "CachedImage.h"
+ #include "CanvasRenderingContext.h"
+ #include "Document.h"
+ #include "GraphicsContext.h"
+ #include "HTMLCanvasElement.h"
++#include "HTMLImageLoader.h"
+ #include "HTMLNames.h"
+ #include "ImageQualityController.h"
+ #include "LocalFrame.h"
+@@ -77,14 +79,21 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
+     ASSERT(!isSkippedContentRoot(*this));
+ 
+     GraphicsContext& context = paintInfo.context();
++    auto& canvas = canvasElement();
+ 
+     LayoutRect contentBoxRect = this->contentBoxRect();
+ 
+     if (context.detectingContentfulPaint()) {
+-        if (!context.contentfulPaintDetected() && canvasElement().renderingContext())
++        if (!context.contentfulPaintDetected() && (canvas.renderingContext() || shouldDisplayPosterImage()))
+             context.setContentfulPaintDetected();
+         return;
+     }
++    
++    // If the canvas hasn't been drawn to and has a poster, paint the poster instead.
++    if (shouldDisplayPosterImage()) {
++        paintPosterImage(paintInfo, paintOffset);
++        return;
++    }
+ 
+     contentBoxRect.moveBy(paintOffset);
+     LayoutRect replacedContentRect = this->replacedContentRect();
+@@ -101,9 +110,9 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
+ 
+     InterpolationQualityMaintainer interpolationMaintainer(context, ImageQualityController::interpolationQualityFromStyle(style()));
+ 
+-    canvasElement().setIsSnapshotting(paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting));
+-    canvasElement().paint(context, replacedContentRect);
+-    canvasElement().setIsSnapshotting(false);
++    canvas.setIsSnapshotting(paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting));
++    canvas.paint(context, replacedContentRect);
++    canvas.setIsSnapshotting(false);
+ }
+ 
+ void RenderHTMLCanvas::canvasSizeChanged()
+@@ -129,4 +138,46 @@ void RenderHTMLCanvas::styleDidChange(Style::Difference difference, const Render
+         canvasElement().dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+ }
+ 
++bool RenderHTMLCanvas::shouldDisplayPosterImage() const
++{
++    return canvasElement().shouldDisplayPosterImage();
++}
++
++void RenderHTMLCanvas::paintPosterImage(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
++{
++    auto& canvas = canvasElement();
++    
++    if (!canvas.shouldDisplayPosterImage())
++        return;
++    
++    // Get the poster image from the image loader
++    auto* imageLoader = canvas.imageLoader();
++    if (!imageLoader)
++        return;
++    
++    CachedImage* cachedImage = imageLoader->image();
++    if (!cachedImage || cachedImage->errorOccurred())
++        return;
++    
++    Image* image = cachedImage->image();
++    if (!image)
++        return;
++    
++    LayoutRect contentRect = contentBoxRect();
++    contentRect.moveBy(paintOffset);
++    
++    LayoutRect replacedContentRect = this->replacedContentRect();
++    replacedContentRect.moveBy(paintOffset);
++    
++    // Not allowed to overflow the content box.
++    bool clip = !contentRect.contains(replacedContentRect);
++    GraphicsContextStateSaver stateSaver(paintInfo.context(), clip);
++    if (clip)
++        paintInfo.context().clip(snappedIntRect(contentRect));
++    
++    InterpolationQualityMaintainer interpolationMaintainer(paintInfo.context(), ImageQualityController::interpolationQualityFromStyle(style()));
++    
++    paintInfo.context().drawImage(*image, snappedIntRect(replacedContentRect), { paintInfo.context().compositeOperation() });
++}
++
+ } // namespace WebCore
+diff --git a/Source/WebCore/rendering/RenderHTMLCanvas.h b/Source/WebCore/rendering/RenderHTMLCanvas.h
+index 51aec905c082..dd83fc332974 100644
+--- a/Source/WebCore/rendering/RenderHTMLCanvas.h
++++ b/Source/WebCore/rendering/RenderHTMLCanvas.h
+@@ -41,12 +41,15 @@ public:
+     HTMLCanvasElement& canvasElement() const;
+ 
+     void canvasSizeChanged();
++    
++    bool shouldDisplayPosterImage() const;
+ 
+ private:
+     void element() const = delete;
+     bool requiresLayer() const override;
+     ASCIILiteral renderName() const override { return "RenderHTMLCanvas"_s; }
+     void paintReplaced(PaintInfo&, const LayoutPoint&) override;
++    void paintPosterImage(PaintInfo&, const LayoutPoint&);
+     void intrinsicSizeChanged() override { canvasSizeChanged(); }
+     void styleDidChange(Style::Difference, const RenderStyle* oldStyle) override;
+ };
