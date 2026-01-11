@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="100%" height="100%" preserveAspectRatio="none">
+  <rect fill="#dbeafe" width="400" height="200"/>
+  <text x="200" y="30" text-anchor="middle" font-family="system-ui, sans-serif" font-size="14" fill="#1e40af">Sales Dashboard</text>
+  
+  <!-- Chart bars -->
+  <rect x="50" y="150" width="50" height="40" fill="#3b82f6"/>
+  <rect x="120" y="120" width="50" height="70" fill="#3b82f6"/>
+  <rect x="190" y="100" width="50" height="90" fill="#3b82f6"/>
+  <rect x="260" y="130" width="50" height="60" fill="#3b82f6"/>
+  
+  <!-- Axis line -->
+  <line x1="40" y1="190" x2="320" y2="190" stroke="#94a3b8" stroke-width="2"/>
+  
+  <!-- Loading indicator -->
+  <text x="350" y="180" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" fill="#64748b">Loading...</text>
+</svg>

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvas Poster Demo - The Problem</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #f8fafc;
+      color: #1e293b;
+    }
+    
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .subtitle {
+      color: #64748b;
+      margin-bottom: 2rem;
+    }
+    
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+    
+    .demo-box {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .demo-box h2 {
+      font-size: 1rem;
+      margin: 0 0 0.25rem 0;
+    }
+    
+    .demo-box .desc {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin-bottom: 1rem;
+    }
+    
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 2 / 1;
+      border: 2px solid #e2e8f0;
+      border-radius: 4px;
+      background: white;
+    }
+    
+    .status {
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      font-family: monospace;
+      color: #64748b;
+    }
+    
+    .status.ready {
+      color: #16a34a;
+    }
+    
+    .support-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      margin-left: 0.5rem;
+    }
+    
+    .support-badge.supported {
+      background: #dcfce7;
+      color: #166534;
+    }
+    
+    .support-badge.unsupported {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    
+    .controls {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+    
+    .controls label {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .controls input[type="range"] {
+      flex: 1;
+      max-width: 200px;
+    }
+    
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      margin-top: 1rem;
+    }
+    
+    button:hover {
+      background: #2563eb;
+    }
+    
+    .timeline {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .timeline h2 {
+      font-size: 1rem;
+      margin: 0 0 1rem 0;
+    }
+    
+    .timeline-bar {
+      height: 30px;
+      background: #f1f5f9;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+    
+    .timeline-bar .label {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.75rem;
+      color: #64748b;
+      z-index: 1;
+    }
+    
+    .timeline-bar .fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.1s linear;
+    }
+    
+    .timeline-bar.blank .fill { background: #fecaca; }
+    .timeline-bar.poster .fill { background: #bbf7d0; }
+    .timeline-bar.rendered .fill { background: #dbeafe; }
+    
+    .timeline-legend {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+    
+    .timeline-legend span {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .timeline-legend .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+    }
+    
+    .lcp-marker {
+      font-size: 0.75rem;
+      margin-top: 1rem;
+      padding: 0.5rem;
+      background: #fef3c7;
+      border-radius: 4px;
+      color: #92400e;
+    }
+  </style>
+</head>
+<body>
+  <h1>The Canvas Poster Problem</h1>
+  <p class="subtitle">Demonstrating why canvas needs a <code>poster</code> attribute</p>
+  
+  <div class="controls">
+    <label>
+      Simulated JS delay: <span id="delay-display">2000</span>ms
+      <input type="range" id="delay-slider" min="500" max="5000" step="250" value="2000">
+    </label>
+    <button id="restart-btn">Restart Demo</button>
+  </div>
+  
+  <div class="demo-grid">
+    <div class="demo-box">
+      <h2>Without poster</h2>
+      <p class="desc">Current behaviour: blank until JS draws</p>
+      <canvas id="canvas-no-poster" width="400" height="200"></canvas>
+      <div class="status" id="status-no-poster">Waiting for JS...</div>
+    </div>
+    
+    <div class="demo-box">
+      <h2>With poster <span id="poster-support-badge" class="support-badge"></span></h2>
+      <p class="desc">Using native poster attribute</p>
+      <canvas id="canvas-with-poster" poster="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200' width='100%25' height='100%25' preserveAspectRatio='none'><rect fill='%23dbeafe' width='400' height='200'/><text x='200' y='30' text-anchor='middle' font-family='system-ui' font-size='14' fill='%231e40af'>Sales Dashboard</text><rect x='50' y='150' width='50' height='40' fill='%233b82f6'/><rect x='120' y='120' width='50' height='70' fill='%233b82f6'/><rect x='190' y='100' width='50' height='90' fill='%233b82f6'/><rect x='260' y='130' width='50' height='60' fill='%233b82f6'/><line x1='40' y1='190' x2='320' y2='190' stroke='%2394a3b8' stroke-width='2'/></svg>" width="400" height="200"></canvas>
+      <div class="status" id="status-with-poster">Checking poster support...</div>
+    </div>
+  </div>
+  
+  <div class="timeline">
+    <h2>Visual Timeline</h2>
+    <div class="timeline-bar blank">
+      <span class="label">Without poster</span>
+      <div class="fill" id="fill-no-poster" style="width: 0%"></div>
+    </div>
+    <div class="timeline-bar poster">
+      <span class="label">With poster</span>
+      <div class="fill" id="fill-with-poster" style="width: 0%"></div>
+    </div>
+    <div class="timeline-legend">
+      <span><span class="dot" style="background: #fecaca"></span> Blank (no LCP)</span>
+      <span><span class="dot" style="background: #bbf7d0"></span> Poster visible (LCP candidate)</span>
+      <span><span class="dot" style="background: #dbeafe"></span> Canvas rendered</span>
+    </div>
+    <div class="lcp-marker" id="lcp-marker"></div>
+  </div>
+
+  <script>
+    const delaySlider = document.getElementById('delay-slider');
+    const delayDisplay = document.getElementById('delay-display');
+    const restartBtn = document.getElementById('restart-btn');
+    
+    const canvasNoPoster = document.getElementById('canvas-no-poster');
+    const canvasWithPoster = document.getElementById('canvas-with-poster');
+    const statusNoPoster = document.getElementById('status-no-poster');
+    const statusWithPoster = document.getElementById('status-with-poster');
+    const fillNoPoster = document.getElementById('fill-no-poster');
+    const fillWithPoster = document.getElementById('fill-with-poster');
+    const posterSupportBadge = document.getElementById('poster-support-badge');
+    const lcpMarker = document.getElementById('lcp-marker');
+    
+    let animationId = null;
+    let startTime = null;
+    
+    // Detect if browser supports canvas poster attribute
+    const posterSupported = 'poster' in HTMLCanvasElement.prototype;
+    
+    // Update support badge
+    posterSupportBadge.textContent = posterSupported ? 'Supported' : 'Not supported';
+    posterSupportBadge.classList.add(posterSupported ? 'supported' : 'unsupported');
+    
+    // Update LCP marker based on support
+    if (posterSupported) {
+      lcpMarker.textContent = 'LCP impact: This browser supports poster! The poster image shows immediately as an LCP candidate while JS loads.';
+      lcpMarker.style.background = '#dcfce7';
+      lcpMarker.style.color = '#166534';
+    } else {
+      lcpMarker.textContent = 'LCP impact: This browser does not support the poster attribute. Both canvases wait for JS to render.';
+      lcpMarker.style.background = '#fee2e2';
+      lcpMarker.style.color = '#991b1b';
+    }
+    
+    delaySlider.addEventListener('input', () => {
+      delayDisplay.textContent = delaySlider.value;
+    });
+    
+    // Interactive chart state
+    const chartState = {
+      barData: [40, 70, 90, 60],
+      labels: ['Q1', 'Q2', 'Q3', 'Q4'],
+      barWidth: 50,
+      gap: 70,
+      startX: 50,
+      hoveredBar: -1,
+      isLive: false,
+      liveInterval: null
+    };
+    
+    function getBarRects(canvas) {
+      const h = canvas.height;
+      return chartState.barData.map((height, i) => ({
+        x: chartState.startX + i * chartState.gap,
+        y: h - 10 - height,
+        width: chartState.barWidth,
+        height: height,
+        value: height,
+        label: chartState.labels[i]
+      }));
+    }
+    
+    function drawChart(canvas, hoveredIndex = -1) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      
+      // Clear and draw background
+      ctx.fillStyle = '#dbeafe';
+      ctx.fillRect(0, 0, w, h);
+      
+      // Title
+      ctx.fillStyle = '#1e40af';
+      ctx.font = '14px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('Sales Dashboard', w/2, 30);
+      
+      // Draw bars
+      const bars = getBarRects(canvas);
+      bars.forEach((bar, i) => {
+        // Bar fill - highlight on hover
+        ctx.fillStyle = i === hoveredIndex ? '#2563eb' : '#3b82f6';
+        ctx.fillRect(bar.x, bar.y, bar.width, bar.height);
+        
+        // Bar label
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(bar.label, bar.x + bar.width / 2, h - 2);
+      });
+      
+      // Axis
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(40, h - 10);
+      ctx.lineTo(w - 80, h - 10);
+      ctx.stroke();
+      
+      // "Live" indicator with pulsing effect
+      const pulse = chartState.isLive ? 0.5 + 0.5 * Math.sin(Date.now() / 200) : 1;
+      ctx.fillStyle = `rgba(22, 163, 74, ${pulse})`;
+      ctx.beginPath();
+      ctx.arc(w - 30, 20, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#166534';
+      ctx.font = '10px system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText('LIVE', w - 40, 24);
+      
+      // Draw tooltip if hovering
+      if (hoveredIndex >= 0) {
+        const bar = bars[hoveredIndex];
+        const tooltipText = `${bar.label}: $${bar.value}k`;
+        ctx.font = '12px system-ui';
+        const textWidth = ctx.measureText(tooltipText).width;
+        const tooltipX = bar.x + bar.width / 2 - textWidth / 2 - 8;
+        const tooltipY = bar.y - 30;
+        
+        // Tooltip background
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.roundRect(tooltipX, tooltipY, textWidth + 16, 24, 4);
+        ctx.fill();
+        
+        // Tooltip arrow
+        ctx.beginPath();
+        ctx.moveTo(bar.x + bar.width / 2 - 6, tooltipY + 24);
+        ctx.lineTo(bar.x + bar.width / 2, tooltipY + 30);
+        ctx.lineTo(bar.x + bar.width / 2 + 6, tooltipY + 24);
+        ctx.fill();
+        
+        // Tooltip text
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.fillText(tooltipText, bar.x + bar.width / 2, tooltipY + 16);
+      }
+    }
+    
+    function setupInteractivity(canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      canvas.addEventListener('mousemove', (e) => {
+        if (!chartState.isLive) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        
+        const bars = getBarRects(canvas);
+        let hoveredIndex = -1;
+        
+        bars.forEach((bar, i) => {
+          if (x >= bar.x && x <= bar.x + bar.width &&
+              y >= bar.y && y <= bar.y + bar.height) {
+            hoveredIndex = i;
+          }
+        });
+        
+        if (hoveredIndex !== chartState.hoveredBar) {
+          chartState.hoveredBar = hoveredIndex;
+          canvas.style.cursor = hoveredIndex >= 0 ? 'pointer' : 'default';
+          drawChart(canvas, hoveredIndex);
+        }
+      });
+      
+      canvas.addEventListener('mouseleave', () => {
+        chartState.hoveredBar = -1;
+        canvas.style.cursor = 'default';
+        if (chartState.isLive) {
+          drawChart(canvas, -1);
+        }
+      });
+      
+      canvas.addEventListener('click', (e) => {
+        if (!chartState.isLive || chartState.hoveredBar < 0) return;
+        
+        // Simulate "drilling down" - randomize that bar's value
+        chartState.barData[chartState.hoveredBar] = 30 + Math.floor(Math.random() * 70);
+        drawChart(canvasNoPoster, canvasNoPoster === canvas ? chartState.hoveredBar : -1);
+        drawChart(canvasWithPoster, canvasWithPoster === canvas ? chartState.hoveredBar : -1);
+      });
+    }
+    
+    function startLiveUpdates() {
+      chartState.isLive = true;
+      
+      // Periodic data updates
+      chartState.liveInterval = setInterval(() => {
+        // Randomly adjust one bar
+        const idx = Math.floor(Math.random() * chartState.barData.length);
+        const change = (Math.random() - 0.5) * 20;
+        chartState.barData[idx] = Math.max(20, Math.min(100, chartState.barData[idx] + change));
+        
+        drawChart(canvasNoPoster, chartState.hoveredBar);
+        drawChart(canvasWithPoster, chartState.hoveredBar);
+      }, 2000);
+      
+      // Pulsing live indicator
+      function pulse() {
+        if (chartState.isLive) {
+          drawChart(canvasNoPoster, chartState.hoveredBar);
+          drawChart(canvasWithPoster, chartState.hoveredBar);
+          requestAnimationFrame(pulse);
+        }
+      }
+      pulse();
+    }
+    
+    function stopLiveUpdates() {
+      chartState.isLive = false;
+      if (chartState.liveInterval) {
+        clearInterval(chartState.liveInterval);
+        chartState.liveInterval = null;
+      }
+    }
+    
+    // Setup interactivity on both canvases
+    setupInteractivity(canvasNoPoster);
+    setupInteractivity(canvasWithPoster);
+    
+    let posterCanvasTouched = false;
+    
+    function runDemo() {
+      stopLiveUpdates();
+      chartState.barData = [40, 70, 90, 60]; // Reset data
+      const delay = parseInt(delaySlider.value);
+      
+      // Only clear the non-poster canvas - don't touch poster canvas until delay!
+      const ctxNo = canvasNoPoster.getContext('2d');
+      ctxNo.clearRect(0, 0, canvasNoPoster.width, canvasNoPoster.height);
+      
+      statusNoPoster.textContent = 'Waiting for JS...';
+      statusNoPoster.classList.remove('ready');
+      
+      if (posterSupported && !posterCanvasTouched) {
+        statusWithPoster.textContent = 'Poster visible, waiting for JS...';
+        fillWithPoster.style.width = '100%';
+        fillWithPoster.style.background = '#bbf7d0';
+      } else {
+        statusWithPoster.textContent = posterSupported ? 'Canvas was drawn to, poster hidden' : 'Poster not supported, waiting for JS...';
+        fillWithPoster.style.width = '0%';
+        fillWithPoster.style.background = '#fecaca';
+      }
+      statusWithPoster.classList.remove('ready');
+      
+      fillNoPoster.style.width = '0%';
+      fillNoPoster.style.background = '#fecaca';
+      
+      startTime = performance.now();
+      
+      if (animationId) cancelAnimationFrame(animationId);
+      
+      function updateTimeline() {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / delay * 100, 100);
+        
+        fillNoPoster.style.width = `${progress}%`;
+        if (!posterSupported || posterCanvasTouched) {
+          fillWithPoster.style.width = `${progress}%`;
+        }
+        
+        if (elapsed < delay) {
+          animationId = requestAnimationFrame(updateTimeline);
+        } else {
+          // JS "finished loading" - draw to both canvases
+          drawChart(canvasNoPoster);
+          drawChart(canvasWithPoster);
+          posterCanvasTouched = true;
+          
+          fillNoPoster.style.background = '#dbeafe';
+          fillWithPoster.style.background = '#dbeafe';
+          
+          statusNoPoster.textContent = `Interactive! Hover bars, click to change`;
+          statusNoPoster.classList.add('ready');
+          statusWithPoster.textContent = `Interactive! Hover bars, click to change`;
+          statusWithPoster.classList.add('ready');
+          
+          // Start live updates
+          startLiveUpdates();
+        }
+      }
+      
+      animationId = requestAnimationFrame(updateTimeline);
+    }
+    
+    restartBtn.addEventListener('click', runDemo);
+    
+    // Run on load
+    runDemo();
+  </script>
+</body>
+</html>

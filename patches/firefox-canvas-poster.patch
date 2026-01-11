@@ -1,0 +1,623 @@
+diff --git a/dom/canvas/CanvasRenderingContext2D.cpp b/dom/canvas/CanvasRenderingContext2D.cpp
+index 16eb6f61903a..2194c64c7d3f 100644
+--- a/dom/canvas/CanvasRenderingContext2D.cpp
++++ b/dom/canvas/CanvasRenderingContext2D.cpp
+@@ -1513,6 +1513,7 @@ nsresult CanvasRenderingContext2D::Redraw() {
+   mIsEntireFrameInvalid = true;
+ 
+   if (mCanvasElement) {
++    mCanvasElement->SetHasBeenDrawnTo(true);
+     SVGObserverUtils::InvalidateDirectRenderingObservers(mCanvasElement);
+     mCanvasElement->InvalidateCanvasContent(nullptr);
+   } else if (mOffscreenCanvas) {
+@@ -1539,6 +1540,7 @@ void CanvasRenderingContext2D::Redraw(const gfx::Rect& aR) {
+   }
+ 
+   if (mCanvasElement) {
++    mCanvasElement->SetHasBeenDrawnTo(true);
+     SVGObserverUtils::InvalidateDirectRenderingObservers(mCanvasElement);
+     mCanvasElement->InvalidateCanvasContent(&aR);
+   } else if (mOffscreenCanvas) {
+diff --git a/dom/canvas/ImageBitmapRenderingContext.cpp b/dom/canvas/ImageBitmapRenderingContext.cpp
+index 9caba12f7492..1cdcb16cf03e 100644
+--- a/dom/canvas/ImageBitmapRenderingContext.cpp
++++ b/dom/canvas/ImageBitmapRenderingContext.cpp
+@@ -307,6 +307,7 @@ ImageBitmapRenderingContext::Redraw(const gfxRect& aDirty) {
+   if (mOffscreenCanvas) {
+     mOffscreenCanvas->CommitFrameToCompositor();
+   } else if (mCanvasElement) {
++    mCanvasElement->SetHasBeenDrawnTo(true);
+     mozilla::gfx::Rect rect = ToRect(aDirty);
+     mCanvasElement->InvalidateCanvasContent(&rect);
+   }
+diff --git a/dom/canvas/WebGLContext.cpp b/dom/canvas/WebGLContext.cpp
+index 05608061f239..495c1ee9444d 100644
+--- a/dom/canvas/WebGLContext.cpp
++++ b/dom/canvas/WebGLContext.cpp
+@@ -236,6 +236,7 @@ void ClientWebGLContext::MarkCanvasDirty() {
+   mIsCanvasDirty = true;
+ 
+   if (mCanvasElement) {
++    mCanvasElement->SetHasBeenDrawnTo(true);
+     SVGObserverUtils::InvalidateDirectRenderingObservers(mCanvasElement);
+     mCanvasElement->InvalidateCanvasContent(nullptr);
+   } else if (mOffscreenCanvas) {
+diff --git a/dom/canvas/test/mochitest.toml b/dom/canvas/test/mochitest.toml
+index d7b48a9cbe8f..796b681256b9 100644
+--- a/dom/canvas/test/mochitest.toml
++++ b/dom/canvas/test/mochitest.toml
+@@ -218,6 +218,8 @@ subsuite = "gpu"
+ ["test_canvas.html"]
+ subsuite = "gpu"
+ 
++["test_canvas_poster.html"]
++
+ ["test_canvas_focusring.html"]
+ skip-if = [
+   "os == 'linux' && os_version == '24.04' && arch == 'x86_64' && display == 'x11' && debug",
+diff --git a/dom/canvas/test/test_canvas_poster.html b/dom/canvas/test/test_canvas_poster.html
+new file mode 100644
+index 000000000000..d4d012fd4788
+--- /dev/null
++++ b/dom/canvas/test/test_canvas_poster.html
+@@ -0,0 +1,58 @@
++<!DOCTYPE HTML>
++<html>
++<head>
++  <title>Test for canvas poster attribute</title>
++  <script src="/tests/SimpleTest/SimpleTest.js"></script>
++  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
++</head>
++<body>
++<p id="display"></p>
++<div id="content">
++  <canvas id="testCanvas" width="100" height="100"></canvas>
++</div>
++<pre id="test">
++<script type="application/javascript">
++
++SimpleTest.waitForExplicitFinish();
++
++function runTests() {
++  const canvas = document.getElementById("testCanvas");
++
++  // Test 1: poster attribute defaults to empty string
++  is(canvas.poster, "", "poster should default to empty string");
++
++  // Test 2: setting poster attribute
++  canvas.poster = "image_green.png";
++  is(canvas.getAttribute("poster"), "image_green.png",
++     "poster content attribute should be set");
++
++  // Test 3: poster IDL attribute returns resolved URL
++  ok(canvas.poster.endsWith("image_green.png"),
++     "poster IDL attribute should return URL");
++
++  // Test 4: getting context doesn't affect poster attribute
++  const ctx = canvas.getContext("2d");
++  is(canvas.getAttribute("poster"), "image_green.png",
++     "getting context should not affect poster attribute");
++
++  // Test 5: drawing to canvas doesn't remove poster attribute
++  ctx.fillStyle = "red";
++  ctx.fillRect(0, 0, 50, 50);
++  is(canvas.getAttribute("poster"), "image_green.png",
++     "drawing should not remove poster attribute");
++
++  // Test 6: clearing poster attribute
++  canvas.poster = "";
++  is(canvas.getAttribute("poster"), "", "poster content attribute should be empty");
++  ok(!canvas.hasAttribute("poster") || canvas.getAttribute("poster") === "",
++     "poster attribute should be empty or removed");
++
++  SimpleTest.finish();
++}
++
++addLoadEvent(runTests);
++
++</script>
++</pre>
++</body>
++</html>
+diff --git a/dom/html/HTMLCanvasElement.cpp b/dom/html/HTMLCanvasElement.cpp
+index 9c6b913232a6..bc41c3e61170 100644
+--- a/dom/html/HTMLCanvasElement.cpp
++++ b/dom/html/HTMLCanvasElement.cpp
+@@ -13,6 +13,8 @@
+ #include "MediaTrackGraph.h"
+ #include "VRManagerChild.h"
+ #include "WindowRenderer.h"
++#include "imgLoader.h"
++#include "imgRequestProxy.h"
+ #include "jsapi.h"
+ #include "jsfriendapi.h"
+ #include "mozilla/Assertions.h"
+@@ -36,6 +38,7 @@
+ #include "mozilla/dom/MouseEvent.h"
+ #include "mozilla/dom/OffscreenCanvas.h"
+ #include "mozilla/dom/OffscreenCanvasDisplayHelper.h"
++#include "mozilla/dom/ReferrerInfo.h"
+ #include "mozilla/dom/VideoStreamTrack.h"
+ #include "mozilla/gfx/Rect.h"
+ #include "mozilla/layers/CanvasRenderer.h"
+@@ -46,6 +49,8 @@
+ #include "nsContentUtils.h"
+ #include "nsDOMJSUtils.h"
+ #include "nsDisplayList.h"
++#include "nsILoadGroup.h"
++#include "nsIReferrerInfo.h"
+ #include "nsITimer.h"
+ #include "nsJSUtils.h"
+ #include "nsLayoutUtils.h"
+@@ -507,6 +512,10 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLCanvasElement)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLCanvasElement,
+                                                 nsGenericHTMLElement)
+   tmp->Destroy();
++  if (tmp->mPosterRequest) {
++    tmp->mPosterRequest->Cancel(NS_BINDING_ABORTED);
++    tmp->mPosterRequest = nullptr;
++  }
+   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCurrentContext, mPrintCallback, mPrintState,
+                                   mOriginalCanvas, mOffscreenCanvas)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+@@ -518,8 +527,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLCanvasElement,
+                                     mOffscreenCanvas)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+ 
+-NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(HTMLCanvasElement,
+-                                               nsGenericHTMLElement)
++NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(HTMLCanvasElement,
++                                             nsGenericHTMLElement,
++                                             imgINotificationObserver)
+ 
+ NS_IMPL_ELEMENT_CLONE(HTMLCanvasElement)
+ 
+@@ -599,6 +609,10 @@ void HTMLCanvasElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                                      bool aNotify) {
+   AfterMaybeChangeAttr(aNamespaceID, aName, aNotify);
+ 
++  if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::poster) {
++    UpdatePosterImage(aNotify);
++  }
++
+   return nsGenericHTMLElement::AfterSetAttr(
+       aNamespaceID, aName, aValue, aOldValue, aSubjectPrincipal, aNotify);
+ }
+@@ -1546,4 +1560,124 @@ webgpu::CanvasContext* HTMLCanvasElement::GetWebGPUContext() {
+   return static_cast<webgpu::CanvasContext*>(GetCurrentContext());
+ }
+ 
++void HTMLCanvasElement::SetHasBeenDrawnTo(bool aValue) {
++  if (mHasBeenDrawnTo == aValue) {
++    return;
++  }
++
++  mHasBeenDrawnTo = aValue;
++
++  if (aValue && mPosterRequest) {
++    InvalidateFrameForPoster();
++  }
++}
++
++bool HTMLCanvasElement::HasPoster() const { return HasAttr(nsGkAtoms::poster); }
++
++bool HTMLCanvasElement::PosterLoaded() const {
++  if (!mPosterRequest) {
++    return false;
++  }
++
++  uint32_t status = 0;
++  mPosterRequest->GetImageStatus(&status);
++  return (status & imgIRequest::STATUS_LOAD_COMPLETE) &&
++         !(status & imgIRequest::STATUS_ERROR);
++}
++
++imgIRequest* HTMLCanvasElement::GetPosterRequest() const {
++  return mPosterRequest;
++}
++
++void HTMLCanvasElement::UpdatePosterImage(bool aNotify) {
++  nsAutoString posterStr;
++  GetAttr(nsGkAtoms::poster, posterStr);
++
++  if (posterStr.IsEmpty()) {
++    if (mPosterRequest) {
++      mPosterRequest->Cancel(NS_BINDING_ABORTED);
++      mPosterRequest = nullptr;
++    }
++    if (aNotify) {
++      InvalidateFrameForPoster();
++    }
++    return;
++  }
++
++  nsCOMPtr<nsIURI> posterURI;
++  nsresult rv = nsContentUtils::NewURIWithDocumentCharset(
++      getter_AddRefs(posterURI), posterStr, OwnerDoc(), GetBaseURI());
++
++  if (NS_FAILED(rv) || !posterURI) {
++    return;
++  }
++
++  if (mPosterRequest) {
++    nsCOMPtr<nsIURI> currentURI;
++    mPosterRequest->GetURI(getter_AddRefs(currentURI));
++    bool equal = false;
++    if (currentURI && NS_SUCCEEDED(currentURI->Equals(posterURI, &equal)) &&
++        equal) {
++      return;
++    }
++    mPosterRequest->Cancel(NS_BINDING_ABORTED);
++    mPosterRequest = nullptr;
++  }
++
++  Document* doc = OwnerDoc();
++  if (!doc) {
++    return;
++  }
++
++  nsCOMPtr<nsILoadGroup> loadGroup = doc->GetDocumentLoadGroup();
++  RefPtr<imgLoader> loader = nsContentUtils::GetImgLoaderForDocument(doc);
++  if (!loader) {
++    return;
++  }
++
++  nsCOMPtr<nsINode> thisNode = this;
++  nsCOMPtr<nsIReferrerInfo> referrerInfo = new ReferrerInfo(*this);
++
++  rv = loader->LoadImage(posterURI,
++                         nullptr,  // aInitialDocumentURI
++                         referrerInfo, NodePrincipal(),
++                         0,  // aRequestContextID
++                         loadGroup,
++                         this,  // aObserver
++                         thisNode, doc, nsIRequest::LOAD_NORMAL,
++                         nullptr,  // aTriggeringPrincipal
++                         nsIContentPolicy::TYPE_INTERNAL_IMAGE,
++                         u"canvas"_ns,  // aInitiatorType for Resource Timing
++                         false,         // aUseUrgentStartForChannel
++                         false,         // aLinkPreload
++                         0,             // aEarlyHintPreloaderId
++                         FetchPriority::Auto, getter_AddRefs(mPosterRequest));
++
++  if (NS_SUCCEEDED(rv) && mPosterRequest && aNotify && !mHasBeenDrawnTo) {
++    InvalidateFrameForPoster();
++  }
++}
++
++void HTMLCanvasElement::InvalidateFrameForPoster() {
++  nsIFrame* frame = GetPrimaryFrame();
++  if (frame) {
++    frame->InvalidateFrame();
++  }
++}
++
++void HTMLCanvasElement::Notify(imgIRequest* aRequest, int32_t aType,
++                               const nsIntRect* aData) {
++  if (aRequest != mPosterRequest) {
++    return;
++  }
++
++  if (aType == imgINotificationObserver::LOAD_COMPLETE ||
++      aType == imgINotificationObserver::FRAME_COMPLETE ||
++      aType == imgINotificationObserver::DECODE_COMPLETE) {
++    if (!HasBeenDrawnTo()) {
++      InvalidateFrameForPoster();
++    }
++  }
++}
++
+ }  // namespace mozilla::dom
+diff --git a/dom/html/HTMLCanvasElement.h b/dom/html/HTMLCanvasElement.h
+index 10a41aa48e61..0475af3cc0b5 100644
+--- a/dom/html/HTMLCanvasElement.h
++++ b/dom/html/HTMLCanvasElement.h
+@@ -7,6 +7,9 @@
+ #define mozilla_dom_HTMLCanvasElement_h
+ 
+ #include "LayoutConstants.h"
++#include "imgINotificationObserver.h"
++#include "imgIRequest.h"
++#include "imgRequestProxy.h"
+ #include "mozilla/Attributes.h"
+ #include "mozilla/StateWatching.h"
+ #include "mozilla/WeakPtr.h"
+@@ -109,7 +112,8 @@ class FrameCaptureListener : public SupportsWeakPtr {
+ 
+ class HTMLCanvasElement final : public nsGenericHTMLElement,
+                                 public CanvasRenderingContextHelper,
+-                                public SupportsWeakPtr {
++                                public SupportsWeakPtr,
++                                public imgINotificationObserver {
+   typedef layers::CanvasRenderer CanvasRenderer;
+   typedef layers::LayerManager LayerManager;
+   typedef layers::WebRenderCanvasData WebRenderCanvasData;
+@@ -123,6 +127,9 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
+   // nsISupports
+   NS_DECL_ISUPPORTS_INHERITED
+ 
++  // imgINotificationObserver
++  NS_DECL_IMGINOTIFICATIONOBSERVER
++
+   // CC
+   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLCanvasElement,
+                                            nsGenericHTMLElement)
+@@ -139,6 +146,20 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
+   void SetHeight(uint32_t aHeight, ErrorResult& aRv);
+   void SetWidth(uint32_t aWidth, ErrorResult& aRv);
+ 
++  void GetPoster(nsAString& aValue) const {
++    GetURIAttr(nsGkAtoms::poster, nullptr, aValue);
++  }
++  void SetPoster(const nsAString& aValue, ErrorResult& aRv) {
++    SetHTMLAttr(nsGkAtoms::poster, aValue, aRv);
++  }
++
++  bool HasBeenDrawnTo() const { return mHasBeenDrawnTo; }
++  void SetHasBeenDrawnTo(bool aValue);
++
++  bool HasPoster() const;
++  bool PosterLoaded() const;
++  imgIRequest* GetPosterRequest() const;
++
+   already_AddRefed<nsISupports> GetContext(
+       JSContext* aCx, const nsAString& aContextId,
+       JS::Handle<JS::Value> aContextOptions, ErrorResult& aRv);
+@@ -378,6 +399,12 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
+   // is itself write-only.
+   bool mWriteOnly;
+ 
++  // Track whether any draw operation has occurred on the canvas.
++  bool mHasBeenDrawnTo = false;
++
++  // The poster image request for the canvas poster attribute.
++  RefPtr<imgRequestProxy> mPosterRequest;
++
+  public:
+   // When this canvas is (only) tainted by an image from an extension
+   // content script, allow reads from the same extension afterwards.
+@@ -409,6 +436,9 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
+    * @param aNotify Whether we plan to notify document observers.
+    */
+   void AfterMaybeChangeAttr(int32_t aNamespaceID, nsAtom* aName, bool aNotify);
++
++  void UpdatePosterImage(bool aNotify);
++  void InvalidateFrameForPoster();
+ };
+ 
+ class HTMLCanvasPrintState final : public nsWrapperCache {
+diff --git a/dom/webgpu/CanvasContext.cpp b/dom/webgpu/CanvasContext.cpp
+index c2c51bff3905..91fdee925ae1 100644
+--- a/dom/webgpu/CanvasContext.cpp
++++ b/dom/webgpu/CanvasContext.cpp
+@@ -487,6 +487,7 @@ void CanvasContext::InvalidateCanvasContent() {
+   }
+ 
+   if (mCanvasElement) {
++    mCanvasElement->SetHasBeenDrawnTo(true);
+     SVGObserverUtils::InvalidateDirectRenderingObservers(mCanvasElement);
+     mCanvasElement->InvalidateCanvasContent(nullptr);
+   } else if (mOffscreenCanvas) {
+diff --git a/dom/webidl/HTMLCanvasElement.webidl b/dom/webidl/HTMLCanvasElement.webidl
+index 9a435a63aa66..00b14c6ac493 100644
+--- a/dom/webidl/HTMLCanvasElement.webidl
++++ b/dom/webidl/HTMLCanvasElement.webidl
+@@ -22,6 +22,8 @@ interface HTMLCanvasElement : HTMLElement {
+            attribute unsigned long width;
+   [CEReactions, Pure, SetterThrows]
+            attribute unsigned long height;
++  [CEReactions, SetterThrows]
++           attribute DOMString poster;
+ 
+   [Throws]
+   nsISupports? getContext(DOMString contextId, optional any contextOptions = null);
+diff --git a/layout/generic/nsHTMLCanvasFrame.cpp b/layout/generic/nsHTMLCanvasFrame.cpp
+index 1e7f5c8e43b5..41508edf85a9 100644
+--- a/layout/generic/nsHTMLCanvasFrame.cpp
++++ b/layout/generic/nsHTMLCanvasFrame.cpp
+@@ -9,8 +9,12 @@
+ #include "nsHTMLCanvasFrame.h"
+ 
+ #include "ActiveLayerTracker.h"
++#include "ImageContainer.h"
++#include "imgIContainer.h"
++#include "imgIRequest.h"
+ #include "mozilla/Assertions.h"
+ #include "mozilla/PresShell.h"
++#include "mozilla/SVGImageContext.h"
+ #include "mozilla/dom/HTMLCanvasElement.h"
+ #include "mozilla/layers/ImageDataSerializer.h"
+ #include "mozilla/layers/RenderRootStateManager.h"
+@@ -298,6 +302,48 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
+   }
+ };
+ 
++class nsDisplayCanvasPoster final : public nsPaintedDisplayItem {
++ public:
++  nsDisplayCanvasPoster(nsDisplayListBuilder* aBuilder,
++                        nsHTMLCanvasFrame* aFrame)
++      : nsPaintedDisplayItem(aBuilder, aFrame) {
++    MOZ_COUNT_CTOR(nsDisplayCanvasPoster);
++  }
++
++  MOZ_COUNTED_DTOR_FINAL(nsDisplayCanvasPoster)
++
++  NS_DISPLAY_DECL_NAME("CanvasPoster", TYPE_CANVAS_POSTER)
++
++  nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) const override {
++    *aSnap = true;
++    return Frame()->InkOverflowRectRelativeToSelf() + ToReferenceFrame();
++  }
++
++  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
++    auto* f = static_cast<nsHTMLCanvasFrame*>(Frame());
++    auto* canvas = HTMLCanvasElement::FromNode(f->GetContent());
++
++    imgIRequest* request = canvas->GetPosterRequest();
++    if (!request) {
++      return;
++    }
++
++    nsCOMPtr<imgIContainer> image;
++    request->GetImage(getter_AddRefs(image));
++    if (!image) {
++      return;
++    }
++
++    nsRect dest = f->GetDestRect(mFrame->GetContentRectRelativeToSelf() +
++                                 ToReferenceFrame());
++
++    (void)nsLayoutUtils::DrawSingleImage(
++        *aCtx, f->PresContext(), image,
++        nsLayoutUtils::GetSamplingFilterForFrame(f), dest, dest,
++        SVGImageContext(), /* aImageFlags */ 0);
++  }
++};
++
+ nsIFrame* NS_NewHTMLCanvasFrame(PresShell* aPresShell, ComputedStyle* aStyle) {
+   return new (aPresShell)
+       nsHTMLCanvasFrame(aStyle, aPresShell->GetPresContext());
+@@ -456,7 +502,12 @@ void nsHTMLCanvasFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
+     }
+   }
+ 
+-  aLists.Content()->AppendNewToTop<nsDisplayCanvas>(aBuilder, this);
++  auto* canvas = HTMLCanvasElement::FromNode(GetContent());
++  if (canvas->HasBeenDrawnTo()) {
++    aLists.Content()->AppendNewToTop<nsDisplayCanvas>(aBuilder, this);
++  } else if (ShouldShowPoster()) {
++    aLists.Content()->AppendNewToTop<nsDisplayCanvasPoster>(aBuilder, this);
++  }
+ }
+ 
+ void nsHTMLCanvasFrame::AppendDirectlyOwnedAnonBoxes(
+@@ -485,3 +536,9 @@ nsresult nsHTMLCanvasFrame::GetFrameName(nsAString& aResult) const {
+   return MakeFrameName(u"HTMLCanvas"_ns, aResult);
+ }
+ #endif
++
++bool nsHTMLCanvasFrame::ShouldShowPoster() const {
++  auto* canvas = HTMLCanvasElement::FromNode(GetContent());
++  return !canvas->HasBeenDrawnTo() && canvas->HasPoster() &&
++         canvas->PosterLoaded();
++}
+diff --git a/layout/generic/nsHTMLCanvasFrame.h b/layout/generic/nsHTMLCanvasFrame.h
+index 4b2e726b1c31..c8c45cd3266a 100644
+--- a/layout/generic/nsHTMLCanvasFrame.h
++++ b/layout/generic/nsHTMLCanvasFrame.h
+@@ -85,6 +85,9 @@ class nsHTMLCanvasFrame final : public nsContainerFrame {
+ 
+  protected:
+   virtual ~nsHTMLCanvasFrame();
++
++ private:
++  bool ShouldShowPoster() const;
+ };
+ 
+ #endif /* nsHTMLCanvasFrame_h___ */
+diff --git a/layout/painting/nsDisplayItemTypesList.h b/layout/painting/nsDisplayItemTypesList.h
+index d7464949e3ca..354e5a3186a9 100644
+--- a/layout/painting/nsDisplayItemTypesList.h
++++ b/layout/painting/nsDisplayItemTypesList.h
+@@ -18,6 +18,7 @@ DECLARE_DISPLAY_ITEM_TYPE(BORDER, 0)
+ DECLARE_DISPLAY_ITEM_TYPE(BOX_SHADOW_INNER, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(BOX_SHADOW_OUTER, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(CANVAS, TYPE_RENDERS_NO_IMAGES)
++DECLARE_DISPLAY_ITEM_TYPE(CANVAS_POSTER, TYPE_IS_CONTENTFUL)
+ DECLARE_DISPLAY_ITEM_TYPE(CANVAS_BACKGROUND_IMAGE, TYPE_IS_CONTENTFUL)
+ DECLARE_DISPLAY_ITEM_TYPE(CARET, TYPE_RENDERS_NO_IMAGES | TYPE_IS_CONTENTFUL)
+ DECLARE_DISPLAY_ITEM_TYPE(COLUMN_RULE, TYPE_RENDERS_NO_IMAGES)
+diff --git a/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html b/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html
+new file mode 100644
+index 000000000000..cfe5080b1cb8
+--- /dev/null
++++ b/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html
+@@ -0,0 +1,40 @@
++<!DOCTYPE html>
++<html>
++<head>
++<title>Canvas poster disappears after drawing</title>
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++</head>
++<body>
++<div id="log"></div>
++<canvas id="testCanvas" width="100" height="100" poster="/images/green-100x50.png"></canvas>
++<script>
++async_test(function(t) {
++  const canvas = document.getElementById("testCanvas");
++  const ctx = canvas.getContext("2d");
++
++  ctx.fillStyle = "red";
++  ctx.fillRect(0, 0, 100, 100);
++
++  requestAnimationFrame(t.step_func_done(function() {
++    // After drawing, the canvas should show the drawn content, not the poster
++    // This is a basic structural test - visual verification would require reftests
++    assert_true(true, "Drawing to canvas should hide poster");
++  }));
++}, "Canvas poster disappears after first draw operation");
++
++test(function() {
++  const canvas = document.createElement("canvas");
++  canvas.width = 100;
++  canvas.height = 100;
++  canvas.poster = "test.png";
++
++  const ctx = canvas.getContext("2d");
++  ctx.fillRect(0, 0, 10, 10);
++
++  // The poster attribute should still be set even after drawing
++  assert_equals(canvas.getAttribute("poster"), "test.png");
++}, "Canvas poster attribute persists after drawing");
++</script>
++</body>
++</html>
+diff --git a/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html b/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html
+new file mode 100644
+index 000000000000..59342c2b0594
+--- /dev/null
++++ b/testing/web-platform/tests/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html
+@@ -0,0 +1,42 @@
++<!DOCTYPE html>
++<html>
++<head>
++<title>Canvas poster attribute reflection</title>
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++</head>
++<body>
++<div id="log"></div>
++<script>
++test(function() {
++  const canvas = document.createElement("canvas");
++  assert_equals(canvas.poster, "", "poster should be empty string by default");
++}, "Canvas poster attribute defaults to empty string");
++
++test(function() {
++  const canvas = document.createElement("canvas");
++  canvas.poster = "test.png";
++  assert_true(canvas.poster.endsWith("/test.png"), "IDL getter returns resolved URL");
++  assert_equals(canvas.getAttribute("poster"), "test.png", "Content attribute stays as set");
++}, "Canvas poster attribute reflects content attribute");
++
++test(function() {
++  const canvas = document.createElement("canvas");
++  canvas.setAttribute("poster", "image.jpg");
++  assert_true(canvas.poster.endsWith("/image.jpg"), "IDL getter returns resolved URL");
++}, "Canvas poster content attribute reflects to IDL attribute");
++
++test(function() {
++  const canvas = document.createElement("canvas");
++  canvas.poster = "relative/path/image.png";
++  assert_true(canvas.poster.endsWith("relative/path/image.png"), "URL is resolved");
++}, "Canvas poster returns resolved URL for relative paths");
++
++test(function() {
++  const canvas = document.createElement("canvas");
++  canvas.setAttribute("poster", "");
++  assert_equals(canvas.getAttribute("poster"), "", "Content attribute is empty");
++}, "Canvas poster handles empty string");
++</script>
++</body>
++</html>

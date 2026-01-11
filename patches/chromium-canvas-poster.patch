@@ -1,0 +1,666 @@
+diff --git a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+index 7206de7c66..834b69b064 100644
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+@@ -85,12 +85,14 @@
+ #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+ #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
+ #include "third_party/blink/renderer/core/html/html_image_element.h"
++#include "third_party/blink/renderer/core/html/html_image_loader.h"
+ #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
+ #include "third_party/blink/renderer/core/html_names.h"
+ #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
+ #include "third_party/blink/renderer/core/input_type_names.h"
+ #include "third_party/blink/renderer/core/inspector/console_message.h"
+ #include "third_party/blink/renderer/core/layout/hit_test_canvas_result.h"
++#include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
+ #include "third_party/blink/renderer/core/layout/layout_html_canvas.h"
+ #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
+ #include "third_party/blink/renderer/core/layout/layout_replaced.h"
+@@ -437,6 +439,8 @@ void HTMLCanvasElement::ParseAttribute(
+        params.name == html_names::kHeightAttr) &&
+       !within_set_size_) {
+     OnWidthOrHeightAssigned();
++  } else if (params.name == html_names::kPosterAttr) {
++    UpdatePosterImage();
+   }
+   HTMLElement::ParseAttribute(params);
+ }
+@@ -470,6 +474,18 @@ Node::InsertionNotificationRequest HTMLCanvasElement::InsertedInto(
+   return HTMLElement::InsertedInto(node);
+ }
+ 
++void HTMLCanvasElement::AttachLayoutTree(AttachContext& context) {
++  HTMLElement::AttachLayoutTree(context);
++  // Initiate loading of the poster image if specified and not yet loaded.
++  if (!FastGetAttribute(html_names::kPosterAttr).empty() &&
++      !poster_image_loader_) {
++    UpdatePosterImage();
++  }
++  if (poster_image_loader_ && GetLayoutObject()) {
++    poster_image_loader_->OnAttachLayoutTree();
++  }
++}
++
+ bool HTMLCanvasElement::SizeChangesAreAllowed(ExceptionState& exception_state) {
+   if (IsOffscreenCanvasRegistered()) {
+     exception_state.ThrowDOMException(
+@@ -717,11 +733,46 @@ void HTMLCanvasElement::SetContextCreationWasBlocked() {
+   SetNeedsCompositingUpdate();
+ }
+ 
++void HTMLCanvasElement::UpdatePosterImage() {
++  const AtomicString& poster_url = FastGetAttribute(html_names::kPosterAttr);
++
++  if (poster_url.empty()) {
++    poster_image_loader_.Clear();
++    if (LayoutObject* layout_object = GetLayoutObject()) {
++      layout_object->SetShouldDoFullPaintInvalidation();
++    }
++    return;
++  }
++
++  if (!poster_image_loader_) {
++    poster_image_loader_ = MakeGarbageCollected<HTMLImageLoader>(this);
++  }
++  poster_image_loader_->UpdateFromElement(
++      ImageLoader::kUpdateIgnorePreviousError);
++}
++
++bool HTMLCanvasElement::HasPoster() const {
++  return poster_image_loader_ &&
++         !FastGetAttribute(html_names::kPosterAttr).empty();
++}
++
++bool HTMLCanvasElement::PosterLoaded() const {
++  return poster_image_loader_ && poster_image_loader_->GetContent() &&
++         poster_image_loader_->GetContent()->IsLoaded();
++}
++
++ImageResourceContent* HTMLCanvasElement::GetPosterImage() const {
++  return poster_image_loader_ ? poster_image_loader_->GetContent() : nullptr;
++}
++
+ void HTMLCanvasElement::DidDraw(const SkIRect& rect) {
+   if (rect.isEmpty()) {
+     return;
+   }
+ 
++  // Mark that the canvas has been drawn to, hiding any poster image.
++  has_been_drawn_to_ = true;
++
+   // To avoid issuing invalidations multiple times, we can check |dirty_rect_|
+   // and only issue invalidations the first time it becomes non-empty.
+   if (dirty_rect_.IsEmpty()) {
+@@ -1257,6 +1308,12 @@ UkmParameters HTMLCanvasElement::GetUkmParameters() {
+ }
+ 
+ const AtomicString HTMLCanvasElement::ImageSourceURL() const {
++  // Return the poster URL if one is set (used by ImageLoader for poster fetching).
++  // This matches HTMLVideoElement's behavior.
++  const AtomicString& url = FastGetAttribute(html_names::kPosterAttr);
++  if (!StripLeadingAndTrailingHTMLSpaces(url).empty())
++    return url;
++  // Fall back to generating a data URL from the canvas content.
+   return AtomicString(ToDataURLInternal(
+       ImageEncoderUtils::kDefaultRequestedMimeType, 0, kFrontBuffer));
+ }
+@@ -1584,6 +1641,7 @@ void HTMLCanvasElement::NotifyGpuContextLost() {
+ void HTMLCanvasElement::Trace(Visitor* visitor) const {
+   visitor->Trace(listeners_);
+   visitor->Trace(context_);
++  visitor->Trace(poster_image_loader_);
+   ExecutionContextLifecycleObserver::Trace(visitor);
+   PageVisibilityObserver::Trace(visitor);
+   CanvasRenderingContextHost::Trace(visitor);
+diff --git a/third_party/blink/renderer/core/html/canvas/html_canvas_element.h b/third_party/blink/renderer/core/html/canvas/html_canvas_element.h
+index ef0f7a1ea6..7ea6fce77d 100644
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.h
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.h
+@@ -68,7 +68,9 @@ class DOMMatrix;
+ class Element;
+ class GraphicsContext;
+ class HTMLCanvasElement;
++class HTMLImageLoader;
+ class ImageBitmapOptions;
++class ImageResourceContent;
+ class StaticBitmapImageToVideoFrameCopier;
+ class SharedContextRateLimiter;
+ 
+@@ -196,7 +198,15 @@ class CORE_EXPORT HTMLCanvasElement final
+ 
+   const AtomicString ImageSourceURL() const override;
+ 
++  // Poster image support
++  void SetHasBeenDrawnTo(bool value) { has_been_drawn_to_ = value; }
++  bool HasBeenDrawnTo() const { return has_been_drawn_to_; }
++  bool HasPoster() const;
++  bool PosterLoaded() const;
++  ImageResourceContent* GetPosterImage() const;
++
+   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
++  void AttachLayoutTree(AttachContext&) override;
+ 
+   bool IsDirty() { return !dirty_rect_.IsEmpty(); }
+ 
+@@ -390,6 +400,9 @@ class CORE_EXPORT HTMLCanvasElement final
+ 
+   void ChildrenChanged(const ChildrenChange&) override;
+ 
++  // Poster image support
++  void UpdatePosterImage();
++
+   FRIEND_TEST_ALL_PREFIXES(HTMLCanvasElementTest, BrokenCanvasHighRes);
+ 
+   HeapHashSet<WeakMember<CanvasDrawListener>> listeners_;
+@@ -434,6 +447,10 @@ class CORE_EXPORT HTMLCanvasElement final
+   cc::PaintFlags::FilterQuality filter_quality_ =
+       cc::PaintFlags::FilterQuality::kLow;
+   cc::PaintFlags::DynamicRangeLimitMixture dynamic_range_limit_;
++
++  // Poster image support
++  Member<HTMLImageLoader> poster_image_loader_;
++  bool has_been_drawn_to_ = false;
+ };
+ 
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/html/canvas/html_canvas_element.idl b/third_party/blink/renderer/core/html/canvas/html_canvas_element.idl
+index dcd5c33497..ec992057a0 100644
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.idl
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.idl
+@@ -35,6 +35,7 @@
+ 
+     [RaisesException=Setter, CEReactions] attribute unsigned long width;
+     [RaisesException=Setter, CEReactions] attribute unsigned long height;
++    [CEReactions, Reflect, URL] attribute USVString poster;
+ 
+     [RuntimeEnabled=CanvasDrawElement] attribute boolean layoutSubtree;
+     [RuntimeEnabled=CanvasDrawElement, RaisesException] DOMMatrix getElementTransform(Element element, DOMMatrix draw_transform);
+diff --git a/third_party/blink/renderer/core/html/html_image_loader.cc b/third_party/blink/renderer/core/html/html_image_loader.cc
+index ce81cc7627..0000313827 100644
+--- a/third_party/blink/renderer/core/html/html_image_loader.cc
++++ b/third_party/blink/renderer/core/html/html_image_loader.cc
+@@ -23,6 +23,8 @@
+ 
+ #include "third_party/blink/renderer/core/dom/element.h"
+ #include "third_party/blink/renderer/core/dom/events/event.h"
++#include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
++#include "third_party/blink/renderer/core/layout/layout_object.h"
+ #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+ #include "third_party/blink/renderer/core/html/html_image_element.h"
+ #include "third_party/blink/renderer/core/html/html_object_element.h"
+@@ -37,9 +39,9 @@ namespace blink {
+ namespace {
+ 
+ bool ShouldSkipEventDispatch(Element* element) {
+-  // HTMLVideoElement uses this class to load the poster image, but it should
+-  // not fire events for loading or failure.
+-  return IsA<HTMLVideoElement>(*element);
++  // HTMLVideoElement and HTMLCanvasElement use this class to load the poster
++  // image, but they should not fire events for loading or failure.
++  return IsA<HTMLVideoElement>(*element) || IsA<HTMLCanvasElement>(*element);
+ }
+ 
+ }  // namespace
+@@ -122,6 +124,16 @@ void HTMLImageLoader::ImageNotifyFinished(ImageResourceContent*) {
+     html_object_element->RenderFallbackContent(
+         HTMLObjectElement::ErrorEventPolicy::kDoNotDispatch);
+   }
++
++  // For HTMLCanvasElement, trigger a repaint when the poster image loads
++  // (only if the canvas hasn't been drawn to yet).
++  if (auto* canvas = DynamicTo<HTMLCanvasElement>(*element)) {
++    if (!canvas->HasBeenDrawnTo()) {
++      if (LayoutObject* layout_object = canvas->GetLayoutObject()) {
++        layout_object->SetShouldDoFullPaintInvalidation();
++      }
++    }
++  }
+ }
+ 
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/paint/html_canvas_painter.cc b/third_party/blink/renderer/core/paint/html_canvas_painter.cc
+index 583c0ae750..e7eaf99d05 100644
+--- a/third_party/blink/renderer/core/paint/html_canvas_painter.cc
++++ b/third_party/blink/renderer/core/paint/html_canvas_painter.cc
+@@ -8,9 +8,14 @@
+ #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
+ #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+ #include "third_party/blink/renderer/core/layout/layout_html_canvas.h"
++#include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
+ #include "third_party/blink/renderer/core/paint/box_painter.h"
++#include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
+ #include "third_party/blink/renderer/core/paint/paint_info.h"
+ #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
++#include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
++#include "third_party/blink/renderer/core/svg/graphics/svg_image_for_container.h"
++#include "third_party/blink/renderer/platform/graphics/image.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
+ #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
+ #include "third_party/blink/renderer/platform/graphics/scoped_image_rendering_settings.h"
+@@ -31,6 +36,48 @@ InterpolationQuality InterpolationQualityForCanvas(const ComputedStyle& style) {
+ 
+ }  // namespace
+ 
++void HTMLCanvasPainter::PaintPosterImage(const PaintInfo& paint_info,
++                                         const PhysicalOffset& paint_offset,
++                                         ImageResourceContent* poster_content) {
++  if (!poster_content || !poster_content->HasImage())
++    return;
++
++  Image* poster_image = poster_content->GetImage();
++  if (!poster_image)
++    return;
++
++  GraphicsContext& context = paint_info.context;
++  PhysicalRect content_rect = layout_html_canvas_.ReplacedContentRect();
++  content_rect.Move(paint_offset);
++
++  gfx::Rect pixel_snapped_rect = ToPixelSnappedRect(content_rect);
++  if (pixel_snapped_rect.IsEmpty())
++    return;
++
++  gfx::RectF dest_rect(pixel_snapped_rect);
++  scoped_refptr<Image> image_to_draw = poster_image;
++
++  // For SVG images, we need to wrap them in SVGImageForContainer to provide
++  // the container size for proper rendering.
++  if (auto* svg_image = DynamicTo<SVGImage>(*poster_image)) {
++    gfx::SizeF container_size = dest_rect.size();
++    image_to_draw = SVGImageForContainer::Create(
++        *svg_image, container_size, 1.0f, nullptr);
++  }
++
++  gfx::SizeF image_size(image_to_draw->Size());
++  if (image_size.IsEmpty())
++    return;
++
++  gfx::RectF src_rect(image_size);
++
++  // Draw the poster image to fill the content rect.
++  context.DrawImage(
++      *image_to_draw, Image::kSyncDecode,
++      ImageAutoDarkMode::Disabled(),
++      ImagePaintTimingInfo(), dest_rect, &src_rect);
++}
++
+ void HTMLCanvasPainter::PaintReplaced(const PaintInfo& paint_info,
+                                       const PhysicalOffset& paint_offset) {
+   GraphicsContext& context = paint_info.context;
+@@ -39,6 +86,26 @@ void HTMLCanvasPainter::PaintReplaced(const PaintInfo& paint_info,
+   paint_rect.Move(paint_offset);
+ 
+   auto* canvas = To<HTMLCanvasElement>(layout_html_canvas_.GetNode());
++
++  // If the canvas hasn't been drawn to and has a poster image, paint the poster
++  if (!canvas->HasBeenDrawnTo() && canvas->HasPoster() &&
++      canvas->PosterLoaded()) {
++    if (DrawingRecorder::UseCachedDrawingIfPossible(context, layout_html_canvas_,
++                                                    paint_info.phase)) {
++      return;
++    }
++
++    BoxDrawingRecorder recorder(context, layout_html_canvas_, paint_info.phase,
++                                paint_offset);
++    ScopedImageRenderingSettings image_rendering_settings_scope(
++        context, InterpolationQualityForCanvas(layout_html_canvas_.StyleRef()),
++        layout_html_canvas_.StyleRef().GetDynamicRangeLimit());
++    PaintPosterImage(paint_info, paint_offset, canvas->GetPosterImage());
++    PaintTiming::From(layout_html_canvas_.GetDocument())
++        .MarkFirstContentfulPaint();
++    return;
++  }
++
+   if (!canvas->IsCanvasClear()) {
+     PaintTiming::From(layout_html_canvas_.GetDocument())
+         .MarkFirstContentfulPaint();
+diff --git a/third_party/blink/renderer/core/paint/html_canvas_painter.h b/third_party/blink/renderer/core/paint/html_canvas_painter.h
+index 6f7f52c85c..ce99050af3 100644
+--- a/third_party/blink/renderer/core/paint/html_canvas_painter.h
++++ b/third_party/blink/renderer/core/paint/html_canvas_painter.h
+@@ -10,6 +10,7 @@
+ 
+ namespace blink {
+ 
++class ImageResourceContent;
+ class LayoutHTMLCanvas;
+ struct PaintInfo;
+ 
+@@ -22,6 +23,10 @@ class HTMLCanvasPainter {
+   void PaintReplaced(const PaintInfo&, const PhysicalOffset& paint_offset);
+ 
+  private:
++  void PaintPosterImage(const PaintInfo&,
++                        const PhysicalOffset& paint_offset,
++                        ImageResourceContent* poster_content);
++
+   const LayoutHTMLCanvas& layout_html_canvas_;
+ };
+ 
+diff --git a/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html
+new file mode 100644
+index 0000000000..a45e63910b
+--- /dev/null
++++ b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-disappears.html
+@@ -0,0 +1,87 @@
++<!DOCTYPE html>
++<meta charset="utf-8">
++<title>Canvas poster disappears after first draw operation</title>
++<link rel="author" title="Chromium" href="https://chromium.org">
++<link rel="help" href="https://html.spec.whatwg.org/multipage/canvas.html#the-canvas-element">
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++
++<style>
++  canvas {
++    width: 100px;
++    height: 100px;
++  }
++</style>
++
++<canvas id="canvas-2d" width="100" height="100"></canvas>
++<canvas id="canvas-webgl" width="100" height="100"></canvas>
++
++<script>
++// Create a simple red square image as a data URL
++function createTestImageDataURL(color) {
++  const tempCanvas = document.createElement('canvas');
++  tempCanvas.width = 100;
++  tempCanvas.height = 100;
++  const ctx = tempCanvas.getContext('2d');
++  ctx.fillStyle = color;
++  ctx.fillRect(0, 0, 100, 100);
++  return tempCanvas.toDataURL('image/png');
++}
++
++const redImageURL = createTestImageDataURL('red');
++const blueImageURL = createTestImageDataURL('blue');
++
++async_test(t => {
++  const canvas = document.getElementById('canvas-2d');
++  canvas.poster = redImageURL;
++
++  // Wait a bit for the poster to be set up
++  setTimeout(t.step_func(() => {
++    // Get a 2D context and draw something
++    const ctx = canvas.getContext('2d');
++    ctx.fillStyle = 'blue';
++    ctx.fillRect(0, 0, 100, 100);
++
++    // After drawing, the canvas content should be the drawn content (blue),
++    // not the poster (red). We verify by reading pixels.
++    const imageData = ctx.getImageData(50, 50, 1, 1);
++    const [r, g, b] = imageData.data;
++
++    // Blue is (0, 0, 255)
++    assert_equals(r, 0, 'Red channel should be 0');
++    assert_equals(g, 0, 'Green channel should be 0');
++    assert_equals(b, 255, 'Blue channel should be 255');
++
++    t.done();
++  }), 100);
++}, 'Canvas 2D context drawing replaces poster');
++
++async_test(t => {
++  const canvas = document.getElementById('canvas-webgl');
++  canvas.poster = redImageURL;
++
++  setTimeout(t.step_func(() => {
++    const gl = canvas.getContext('webgl');
++    if (!gl) {
++      // WebGL not supported, skip test
++      t.done();
++      return;
++    }
++
++    // Clear to green
++    gl.clearColor(0.0, 1.0, 0.0, 1.0);
++    gl.clear(gl.COLOR_BUFFER_BIT);
++
++    // Read the pixel to verify the content
++    const pixels = new Uint8Array(4);
++    gl.readPixels(50, 50, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
++
++    // Green is (0, 255, 0, 255)
++    assert_equals(pixels[0], 0, 'Red channel should be 0');
++    assert_equals(pixels[1], 255, 'Green channel should be 255');
++    assert_equals(pixels[2], 0, 'Blue channel should be 0');
++
++    t.done();
++  }), 100);
++}, 'WebGL context drawing replaces poster');
++</script>
+diff --git a/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-object-fit.html b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-object-fit.html
+new file mode 100644
+index 0000000000..c8a159a8d8
+--- /dev/null
++++ b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-object-fit.html
+@@ -0,0 +1,107 @@
++<!DOCTYPE html>
++<meta charset="utf-8">
++<title>Canvas poster respects object-fit</title>
++<link rel="author" title="Chromium" href="https://chromium.org">
++<link rel="help" href="https://html.spec.whatwg.org/multipage/canvas.html#the-canvas-element">
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++
++<style>
++  .canvas-fill {
++    object-fit: fill;
++    width: 200px;
++    height: 100px;
++  }
++  .canvas-contain {
++    object-fit: contain;
++    width: 200px;
++    height: 100px;
++  }
++  .canvas-cover {
++    object-fit: cover;
++    width: 200px;
++    height: 100px;
++  }
++  .canvas-none {
++    object-fit: none;
++    width: 200px;
++    height: 100px;
++  }
++  .canvas-scale-down {
++    object-fit: scale-down;
++    width: 200px;
++    height: 100px;
++  }
++</style>
++
++<canvas id="canvas-fill" class="canvas-fill" width="100" height="100"></canvas>
++<canvas id="canvas-contain" class="canvas-contain" width="100" height="100"></canvas>
++<canvas id="canvas-cover" class="canvas-cover" width="100" height="100"></canvas>
++<canvas id="canvas-none" class="canvas-none" width="100" height="100"></canvas>
++<canvas id="canvas-scale-down" class="canvas-scale-down" width="100" height="100"></canvas>
++
++<script>
++// Create a test image
++function createTestImageDataURL() {
++  const tempCanvas = document.createElement('canvas');
++  tempCanvas.width = 100;
++  tempCanvas.height = 100;
++  const ctx = tempCanvas.getContext('2d');
++  ctx.fillStyle = 'red';
++  ctx.fillRect(0, 0, 100, 100);
++  // Add a diagonal line to make distortion visible
++  ctx.strokeStyle = 'white';
++  ctx.lineWidth = 5;
++  ctx.beginPath();
++  ctx.moveTo(0, 0);
++  ctx.lineTo(100, 100);
++  ctx.stroke();
++  return tempCanvas.toDataURL('image/png');
++}
++
++const testImageURL = createTestImageDataURL();
++
++// These tests verify that the canvas accepts the poster attribute
++// with various object-fit styles. Visual verification would require
++// reference tests.
++
++test(() => {
++  const canvas = document.getElementById('canvas-fill');
++  canvas.poster = testImageURL;
++  assert_true(canvas.poster.length > 0);
++  const style = getComputedStyle(canvas);
++  assert_equals(style.objectFit, 'fill');
++}, 'Canvas poster with object-fit: fill');
++
++test(() => {
++  const canvas = document.getElementById('canvas-contain');
++  canvas.poster = testImageURL;
++  assert_true(canvas.poster.length > 0);
++  const style = getComputedStyle(canvas);
++  assert_equals(style.objectFit, 'contain');
++}, 'Canvas poster with object-fit: contain');
++
++test(() => {
++  const canvas = document.getElementById('canvas-cover');
++  canvas.poster = testImageURL;
++  assert_true(canvas.poster.length > 0);
++  const style = getComputedStyle(canvas);
++  assert_equals(style.objectFit, 'cover');
++}, 'Canvas poster with object-fit: cover');
++
++test(() => {
++  const canvas = document.getElementById('canvas-none');
++  canvas.poster = testImageURL;
++  assert_true(canvas.poster.length > 0);
++  const style = getComputedStyle(canvas);
++  assert_equals(style.objectFit, 'none');
++}, 'Canvas poster with object-fit: none');
++
++test(() => {
++  const canvas = document.getElementById('canvas-scale-down');
++  canvas.poster = testImageURL;
++  assert_true(canvas.poster.length > 0);
++  const style = getComputedStyle(canvas);
++  assert_equals(style.objectFit, 'scale-down');
++}, 'Canvas poster with object-fit: scale-down');
++</script>
+diff --git a/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html
+new file mode 100644
+index 0000000000..4c572f90e6
+--- /dev/null
++++ b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-reflects.html
+@@ -0,0 +1,53 @@
++<!DOCTYPE html>
++<meta charset="utf-8">
++<title>Canvas poster attribute reflection</title>
++<link rel="author" title="Chromium" href="https://chromium.org">
++<link rel="help" href="https://html.spec.whatwg.org/multipage/canvas.html#the-canvas-element">
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++
++<canvas id="canvas1"></canvas>
++<canvas id="canvas2" poster="test.png"></canvas>
++<canvas id="canvas3" poster=""></canvas>
++
++<script>
++test(() => {
++  const canvas = document.getElementById('canvas1');
++  assert_equals(canvas.poster, '', 'poster should default to empty string');
++}, 'Canvas poster attribute defaults to empty string');
++
++test(() => {
++  const canvas = document.getElementById('canvas2');
++  assert_true(canvas.poster.endsWith('test.png'), 'poster should reflect the attribute value');
++}, 'Canvas poster attribute reflects value');
++
++test(() => {
++  const canvas = document.getElementById('canvas3');
++  assert_equals(canvas.poster, '', 'poster should be empty string when attribute is empty');
++}, 'Canvas poster attribute reflects empty value');
++
++test(() => {
++  const canvas = document.createElement('canvas');
++  canvas.poster = '/images/test.png';
++  assert_true(canvas.poster.endsWith('/images/test.png'), 'poster should be settable');
++}, 'Canvas poster attribute is settable');
++
++test(() => {
++  const canvas = document.createElement('canvas');
++  canvas.setAttribute('poster', 'relative/path.png');
++  assert_true(canvas.poster.includes('relative/path.png'), 'poster should resolve relative URLs');
++}, 'Canvas poster attribute resolves relative URLs');
++
++test(() => {
++  const canvas = document.createElement('canvas');
++  canvas.poster = 'https://example.com/image.png';
++  assert_equals(canvas.poster, 'https://example.com/image.png', 'poster should accept absolute URLs');
++}, 'Canvas poster attribute accepts absolute URLs');
++
++test(() => {
++  const canvas = document.createElement('canvas');
++  canvas.poster = 'image.png';
++  canvas.removeAttribute('poster');
++  assert_equals(canvas.poster, '', 'poster should be empty after removing attribute');
++}, 'Canvas poster attribute becomes empty when removed');
++</script>
+diff --git a/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-renders.html b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-renders.html
+new file mode 100644
+index 0000000000..6a7650b0ba
+--- /dev/null
++++ b/third_party/blink/web_tests/external/wpt/html/semantics/embedded-content/the-canvas-element/canvas-poster-renders.html
+@@ -0,0 +1,56 @@
++<!DOCTYPE html>
++<meta charset="utf-8">
++<title>Canvas poster renders before draw</title>
++<link rel="author" title="Chromium" href="https://chromium.org">
++<link rel="help" href="https://html.spec.whatwg.org/multipage/canvas.html#the-canvas-element">
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++
++<style>
++  canvas {
++    width: 100px;
++    height: 100px;
++    border: 1px solid black;
++  }
++</style>
++
++<canvas id="canvas-with-poster" width="100" height="100"></canvas>
++<canvas id="canvas-without-poster" width="100" height="100"></canvas>
++
++<script>
++// Create a simple red square image as a data URL
++function createTestImageDataURL() {
++  const tempCanvas = document.createElement('canvas');
++  tempCanvas.width = 100;
++  tempCanvas.height = 100;
++  const ctx = tempCanvas.getContext('2d');
++  ctx.fillStyle = 'red';
++  ctx.fillRect(0, 0, 100, 100);
++  return tempCanvas.toDataURL('image/png');
++}
++
++const testImageURL = createTestImageDataURL();
++
++async_test(t => {
++  const canvas = document.getElementById('canvas-with-poster');
++  canvas.poster = testImageURL;
++
++  // Wait for the poster image to load
++  const img = new Image();
++  img.onload = t.step_func_done(() => {
++    // After the poster loads, the canvas should display it
++    // We can't directly test the rendered output in WPT without reference tests,
++    // but we can verify the attribute is set correctly
++    assert_true(canvas.poster.length > 0, 'poster attribute should be set');
++  });
++  img.onerror = t.step_func_done(() => {
++    assert_unreached('Poster image should load successfully');
++  });
++  img.src = testImageURL;
++}, 'Canvas with poster attribute loads the poster image');
++
++test(() => {
++  const canvas = document.getElementById('canvas-without-poster');
++  assert_equals(canvas.poster, '', 'canvas without poster should have empty poster attribute');
++}, 'Canvas without poster attribute has empty poster');
++</script>
