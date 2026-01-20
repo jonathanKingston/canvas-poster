@@ -6,9 +6,10 @@
 
 ## Participate
 
-- [Issue tracker](https://github.com/jonathan-kingston/canvas-poster-attribute/issues)
+- [Issue tracker](https://github.com/jonathan-kingston/canvas-poster/issues)
 - Prototype patches: [Chromium](patches/chromium-canvas-poster.patch), [Firefox](patches/firefox-canvas-poster.patch), [WebKit](patches/webkit-canvas-poster.patch)
 - [Test cases](test-cases/poster.html)
+- [Proposal link](https://github.com/WICG/proposals/issues/258)
 <!--
 - [Discussion forum]
 -->
